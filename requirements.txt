@@ -1,4 +1,4 @@
-transformers
+transformers==4.9.2
 pytorch-lightning
 torch==1.7.1
 scipy
