@@ -1,0 +1,12 @@
+transformers
+pytorch-lightning
+torch==1.6.0
+scipy
+seqeval
+ipdb
+jsonlines
+fastapi==0.63.0
+uvicorn==0.13.4
+gunicorn
+jupyterlab
+clearml==1.0.5
