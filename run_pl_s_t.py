@@ -10,6 +10,7 @@ task = Task.init(project_name='longGTT', task_name='LEDGTT')#, output_uri='s3://
 
 #task.set_base_docker("nvcr.io/nvidia/pytorch:21.05-py3")
 #task.set_base_docker("default-base")
+task.set_base_docker("nvidia/cuda:10.2-cudnn7-devel-ubuntu18.04")
 
 config = json.load(open('config.json'))
 args = argparse.Namespace(**config)
@@ -361,10 +362,12 @@ class NERTransformer(BaseTransformer):
                     preds_log[docid]["gold_extracts"] = golds[docid]
                     preds_log[docid]["labels"] = converted
 
-        with open("./outputs/debug_preds.txt", "w+") as f:
-            f.write(json.dumps(preds, indent=4))
-        with open("./outputs/debug_gold.txt", "w+") as f:
-            f.write(json.dumps(preds, indent=4))
+                    clearlogger.report_text(preds_log[docid]["doctext"], level=logging.DEBUG, print_console=False)
+                    clearlogger.report_text(preds_log[docid]["pred_seq"], level=logging.DEBUG, print_console=False)
+                    clearlogger.report_text(preds_log[docid]["pred_extracts"], level=logging.DEBUG, print_console=False)
+                    clearlogger.report_text(preds_log[docid]["gold_extracts"], level=logging.DEBUG, print_console=False)
+                    clearlogger.report_text(preds_log[docid]["labels"], level=logging.DEBUG, print_console=False)
+
 
         # evaluate
         results = eval_ceaf(preds, golds)
@@ -381,12 +384,7 @@ class NERTransformer(BaseTransformer):
         clearlogger.report_scalar(title='recall', series = 'test', value=logs["test_micro_avg_recall_phi_strict"], iteration=1) 
 
         logger.info("writing preds to .out file:")
-        if args.debug:
-            with open("./outputs/preds_s_t_debug.out", "w+") as f:
-                f.write(json.dumps(preds_log, indent=4))            
-        else:
-            with open("./outputs/preds_s_t.out", "w+") as f:
-                f.write(json.dumps(preds_log, indent=4))
+
 
         # import ipdb; ipdb.set_trace()
         return {"log": logs, "progress_bar": logs, "preds": preds_log}

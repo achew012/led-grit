@@ -29,6 +29,6 @@
 "labels": "", 
 "data_dir": "./data/muc/processed", 
 "overwrite_cache": true, 
-"debug": false, 
+"debug": true, 
 "thresh": 100.0
 }
