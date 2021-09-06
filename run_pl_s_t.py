@@ -15,7 +15,7 @@ config = json.load(open('config.json'))
 args = argparse.Namespace(**config)
 task.connect(args)
 
-#task.execute_remotely(queue_name="default", exit_process=True)
+task.execute_remotely(queue_name="default", exit_process=True)
 clearlogger = task.get_logger()
 
 import glob
@@ -196,6 +196,7 @@ class NERTransformer(BaseTransformer):
         }
 
         clearlogger.report_scalar(title='accuracy', series = 'val_acc', value=acc, iteration=self.trainer.current_epoch) 
+
         self.log("val_loss", logs["val_loss"])
         self.log("val_accuracy", logs["val_accuracy"])
 
@@ -360,9 +361,9 @@ class NERTransformer(BaseTransformer):
                     preds_log[docid]["gold_extracts"] = golds[docid]
                     preds_log[docid]["labels"] = converted
 
-        with open("/doc_ner/outputs/debug_preds.txt", "w+") as f:
+        with open("./outputs/debug_preds.txt", "w+") as f:
             f.write(json.dumps(preds, indent=4))
-        with open("/doc_ner/outputs/debug_gold.txt", "w+") as f:
+        with open("./outputs/debug_gold.txt", "w+") as f:
             f.write(json.dumps(preds, indent=4))
 
         # evaluate
@@ -375,19 +376,20 @@ class NERTransformer(BaseTransformer):
         logs["test_micro_avg_precision_phi_strict"] = results["strict"]["micro_avg"]["p"]
         logs["test_micro_avg_recall_phi_strict"] = results["strict"]["micro_avg"]["r"]
 
+        clearlogger.report_scalar(title='f1', series = 'test', value=logs["test_micro_avg_f1_phi_strict"], iteration=1) 
+        clearlogger.report_scalar(title='precision', series = 'test', value=logs["test_micro_avg_precision_phi_strict"], iteration=1) 
+        clearlogger.report_scalar(title='recall', series = 'test', value=logs["test_micro_avg_recall_phi_strict"], iteration=1) 
+
         logger.info("writing preds to .out file:")
         if args.debug:
-            with open("/doc_ner/outputs/preds_s_t_debug.out", "w+") as f:
+            with open("./outputs/preds_s_t_debug.out", "w+") as f:
                 f.write(json.dumps(preds_log, indent=4))            
         else:
-            with open("/doc_ner/outputs/preds_s_t.out", "w+") as f:
+            with open("./outputs/preds_s_t.out", "w+") as f:
                 f.write(json.dumps(preds_log, indent=4))
 
         # import ipdb; ipdb.set_trace()
-
         return {"log": logs, "progress_bar": logs, "preds": preds_log}
-        # return {"test_loss": logs["test_loss"], "log": logs, "progress_bar": logs}
-        #return {}
 
     @staticmethod
     def add_model_specific_args(parser, root_dir):
@@ -452,8 +454,7 @@ trainer = generic_train(model, args)
 
 results = trainer.test(model)
 print(results)
-
-#task.close()
+task.close()
 
 
 # model_name = 'longformer-base-4096'#'allenai/led-base-16384'
