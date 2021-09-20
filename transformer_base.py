@@ -84,6 +84,7 @@ class BaseTransformer(pl.LightningModule):
     def is_logger(self):
         return True
 
+    #https://aclanthology.org/2020.findings-emnlp.389.pdf
     def configure_optimizers(self):
         "Prepare optimizer and schedule (linear warmup and decay)"
 
@@ -99,7 +100,7 @@ class BaseTransformer(pl.LightningModule):
                 "weight_decay": 0.0,
             },
         ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        optimizer = AdamW(optimizer_grouped_parameters, lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)        
         self.opt = optimizer
         return [optimizer]
 
@@ -233,11 +234,11 @@ class LoggingCallback(pl.Callback):
 
             # Log and save results to file
             output_test_results_file = os.path.join(pl_module.hparams.output_dir, "test_results.txt")
-            with open(output_test_results_file, "w") as writer:
-                for key in sorted(metrics):
-                    if key not in ["log", "progress_bar"]:
-                        logger.info("{} = {}\n".format(key, str(metrics[key])))
-                        writer.write("{} = {}\n".format(key, str(metrics[key])))
+            # with open(output_test_results_file, "w") as writer:
+            #     for key in sorted(metrics):
+            #         if key not in ["log", "progress_bar"]:
+            #             logger.info("{} = {}\n".format(key, str(metrics[key])))
+            #             writer.write("{} = {}\n".format(key, str(metrics[key])))
 
 
 def add_generic_args(parser, root_dir):

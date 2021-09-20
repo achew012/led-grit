@@ -4,9 +4,9 @@ import json
 
 # Task.add_requirements('botocore', package_version='1.20.106')
 # Task.add_requirements('aiobotocore', package_version='1.3.3')
-# Task.add_requirements('transformers', package_version='4.2.0')
+Task.add_requirements('transformers', package_version='4.2.0')
 
-task = Task.init(project_name='longGTT', task_name='LEDGTT')#, output_uri='s3://experiment-logging')
+task = Task.init(project_name='longGRIT', task_name='LEDGRIT', output_uri="s3://experiment-logging/storage/")
 
 #task.set_base_docker("nvcr.io/nvidia/pytorch:21.05-py3")
 #task.set_base_docker("default-base")
@@ -16,7 +16,7 @@ config = json.load(open('config.json'))
 args = argparse.Namespace(**config)
 task.connect(args)
 
-task.execute_remotely(queue_name="default", exit_process=True)
+task.execute_remotely(queue_name="128RAMv100", exit_process=True)
 clearlogger = task.get_logger()
 
 import glob
@@ -26,11 +26,15 @@ from collections import OrderedDict
 from eval import eval_ceaf
 
 import numpy as np
+from torch import nn
 import torch
 from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score
 from torch.nn import CrossEntropyLoss, Softmax, Linear
 from torch.utils.data import DataLoader, TensorDataset
 
+from transformers.modeling_bart import shift_tokens_right
+
+from transformers import AdamW
 from transformer_base import BaseTransformer, add_generic_args, generic_train
 from utils_s_t import convert_examples_to_features, get_labels, read_examples_from_file, read_golds_from_test_file, not_sub_string, remove_led_prefix_from_tokens
 
@@ -39,6 +43,17 @@ role_list = ["PerpInd", "PerpOrg", "Target", "Victim", "Weapon"]
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO)
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform(m.weight)
+        m.bias.data.fill_(0.01)
+
+
+def init_prompts(num_labels):
+    net = nn.Sequential(nn.Linear(768, 512), nn.tanh(), nn.Linear(512, 768*2*768))
+    net.apply(init_weights)
+    return None
 
 class NERTransformer(BaseTransformer):
     """
@@ -54,9 +69,10 @@ class NERTransformer(BaseTransformer):
 
         # n_gpu = torch.cuda.device_count()
         # self.MASK = tokenizer.convert_tokens_to_ids(['[MASK]'])[0]
-        self.SEP = self.tokenizer.convert_tokens_to_ids(['</s>'])[0]
-        self.CLS = self.tokenizer.convert_tokens_to_ids(['<s>'])[0]
+        self.SEP = self.tokenizer.convert_tokens_to_ids(self.tokenizer.sep_token)
+        self.CLS = self.tokenizer.convert_tokens_to_ids(self.tokenizer.cls_token)
         self.linear = Linear(768, self.hparams.max_seq_length_src)
+
 
     def forward(self, **inputs):
 
@@ -64,6 +80,7 @@ class NERTransformer(BaseTransformer):
         decoder_input_mask_1d = inputs.pop("decoder_attention_mask", None)
         labels = inputs.pop("labels", None) # doc_length
 
+        batch_size = inputs['input_ids'].size()[0]
         global_attention_mask_cls = (inputs['input_ids']==self.CLS).type(torch.uint8)
         global_attention_mask_sep = (inputs['input_ids']==self.SEP).type(torch.uint8)
         global_attention_mask = global_attention_mask_cls + global_attention_mask_sep
@@ -71,6 +88,7 @@ class NERTransformer(BaseTransformer):
 
         outputs = self.model(**inputs) # sequence_output, pooled_output, (hidden_states), (attentions)
         
+
         encoder_last_hidden_state = outputs.encoder_last_hidden_state # seq length by hidden size
         encoder_last_hidden_state = torch.transpose(encoder_last_hidden_state, 1, 2)
         decoder_last_hidden_state = outputs.last_hidden_state # tgt length by hidden size
@@ -99,7 +117,8 @@ class NERTransformer(BaseTransformer):
     def training_step(self, batch, batch_num):
         "Compute loss and log."
         #inputs = {"input_ids": batch[0], "attention_mask": batch[1], "decoder_input_ids": batch[2], "decoder_attention_mask": batch[3], "labels": batch[4], "position_ids": batch[5]}
-        inputs = {"input_ids": batch[0], "attention_mask": batch[1], "decoder_input_ids": batch[2], "decoder_attention_mask": batch[3], "labels": batch[4]}
+        docoder_input_ids = shift_tokens_right(batch[2])
+        inputs = {"input_ids": batch[0], "attention_mask": batch[1], "decoder_input_ids": docoder_input_ids, "decoder_attention_mask": batch[3], "labels": batch[4]}
         
         outputs = self(**inputs)
         loss = outputs[0]
@@ -362,11 +381,11 @@ class NERTransformer(BaseTransformer):
                     preds_log[docid]["gold_extracts"] = golds[docid]
                     preds_log[docid]["labels"] = converted
 
-                    clearlogger.report_text(preds_log[docid]["doctext"], level=logging.DEBUG, print_console=False)
-                    clearlogger.report_text(preds_log[docid]["pred_seq"], level=logging.DEBUG, print_console=False)
-                    clearlogger.report_text(preds_log[docid]["pred_extracts"], level=logging.DEBUG, print_console=False)
-                    clearlogger.report_text(preds_log[docid]["gold_extracts"], level=logging.DEBUG, print_console=False)
-                    clearlogger.report_text(preds_log[docid]["labels"], level=logging.DEBUG, print_console=False)
+                    # clearlogger.report_text(preds_log[docid]["doctext"], level=logging.DEBUG, print_console=False)
+                    # clearlogger.report_text(preds_log[docid]["pred_seq"], level=logging.DEBUG, print_console=False)
+                    # clearlogger.report_text(preds_log[docid]["pred_extracts"], level=logging.DEBUG, print_console=False)
+                    # clearlogger.report_text(preds_log[docid]["gold_extracts"], level=logging.DEBUG, print_console=False)
+                    # clearlogger.report_text(preds_log[docid]["labels"], level=logging.DEBUG, print_console=False)
 
 
         # evaluate
@@ -388,6 +407,15 @@ class NERTransformer(BaseTransformer):
 
         # import ipdb; ipdb.set_trace()
         return {"log": logs, "progress_bar": logs, "preds": preds_log}
+
+
+    def configure_optimizers(self):
+        # Freeze LED weights
+        for idx, (name, parameters) in enumerate(self.model.named_parameters()):
+            parameters.requires_grad=False        
+        optimizer = AdamW(self.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        return optimizer
+
 
     @staticmethod
     def add_model_specific_args(parser, root_dir):
@@ -443,6 +471,13 @@ class NERTransformer(BaseTransformer):
 ### To create config.json
 ##args_dict = vars(args)
 ##json.dump(args_dict, open('config.json', 'w'))
+
+#Read args from config file instead, use vars() to convert namespace to dict
+# dataset = Dataset.get(dataset_name="wikievents-muc4", dataset_project="datasets/wikievents", dataset_tags=["muc4-format"], only_published=True)
+# dataset_folder = dataset.get_local_copy()
+# # if os.path.exists(dataset_folder)==False:
+# os.symlink(os.path.join(dataset_folder, "data/wikievents/muc_format"), args.data_dir)
+
 
 global_args = args
 logger.info(args)
