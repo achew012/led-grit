@@ -32,8 +32,6 @@ from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_sc
 from torch.nn import CrossEntropyLoss, Softmax, Linear
 from torch.utils.data import DataLoader, TensorDataset
 
-from transformers.modeling_bart import shift_tokens_right
-
 from transformers import AdamW
 from transformer_base import BaseTransformer, add_generic_args, generic_train
 from utils_s_t import convert_examples_to_features, get_labels, read_examples_from_file, read_golds_from_test_file, not_sub_string, remove_led_prefix_from_tokens
@@ -44,16 +42,21 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def init_weights(m):
-    if isinstance(m, nn.Linear):
-        torch.nn.init.xavier_uniform(m.weight)
-        m.bias.data.fill_(0.01)
+def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
+    """
+    Shift input ids one token to the right.
+    """
+    shifted_input_ids = input_ids.new_zeros(input_ids.shape)
+    shifted_input_ids[:, 1:] = input_ids[:, :-1].clone()
+    shifted_input_ids[:, 0] = decoder_start_token_id
+
+    assert pad_token_id is not None, "self.model.config.pad_token_id has to be defined."
+    # replace possible -100 values in labels by `pad_token_id`
+    shifted_input_ids.masked_fill_(shifted_input_ids == -100, pad_token_id)
+
+    return shifted_input_ids
 
 
-def init_prompts(num_labels):
-    net = nn.Sequential(nn.Linear(768, 512), nn.tanh(), nn.Linear(512, 768*2*768))
-    net.apply(init_weights)
-    return None
 
 class NERTransformer(BaseTransformer):
     """
@@ -78,13 +81,16 @@ class NERTransformer(BaseTransformer):
 
         #print(', '.join(['{}={!r}'.format(k, v.size()) for k, v in inputs.items()]))
         decoder_input_mask_1d = inputs.pop("decoder_attention_mask", None)
+        decoder_input_ids = inputs.pop("decoder_input_ids", None)
+        decoder_input_ids = shift_tokens_right(decoder_input_ids, self.tokenizer.pad_token_id, self.tokenizer.cls_token_id)
+
         labels = inputs.pop("labels", None) # doc_length
 
         batch_size = inputs['input_ids'].size()[0]
         global_attention_mask_cls = (inputs['input_ids']==self.CLS).type(torch.uint8)
         global_attention_mask_sep = (inputs['input_ids']==self.SEP).type(torch.uint8)
         global_attention_mask = global_attention_mask_cls + global_attention_mask_sep
-        inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True}
+        inputs = {**inputs, "global_attention_mask": global_attention_mask, "decoder_input_ids": decoder_input_ids, "output_attentions":True}
 
         outputs = self.model(**inputs) # sequence_output, pooled_output, (hidden_states), (attentions)
         
@@ -414,6 +420,7 @@ class NERTransformer(BaseTransformer):
         for idx, (name, parameters) in enumerate(self.model.named_parameters()):
             parameters.requires_grad=False        
         optimizer = AdamW(self.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        self.opt=optimizer
         return optimizer
 
 
