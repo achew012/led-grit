@@ -5,7 +5,6 @@ import json
 # Task.add_requirements('botocore', package_version='1.20.106')
 # Task.add_requirements('aiobotocore', package_version='1.3.3')
 Task.add_requirements('transformers', package_version='4.2.0')
-
 task = Task.init(project_name='longGRIT', task_name='LEDGRIT', output_uri="s3://experiment-logging/storage/")
 
 #task.set_base_docker("nvcr.io/nvidia/pytorch:21.05-py3")
@@ -42,19 +41,6 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
-    """
-    Shift input ids one token to the right.
-    """
-    shifted_input_ids = input_ids.new_zeros(input_ids.shape)
-    shifted_input_ids[:, 1:] = input_ids[:, :-1].clone()
-    shifted_input_ids[:, 0] = decoder_start_token_id
-
-    assert pad_token_id is not None, "self.model.config.pad_token_id has to be defined."
-    # replace possible -100 values in labels by `pad_token_id`
-    shifted_input_ids.masked_fill_(shifted_input_ids == -100, pad_token_id)
-
-    return shifted_input_ids
 
 
 
@@ -81,19 +67,18 @@ class NERTransformer(BaseTransformer):
 
         #print(', '.join(['{}={!r}'.format(k, v.size()) for k, v in inputs.items()]))
         decoder_input_mask_1d = inputs.pop("decoder_attention_mask", None)
-        decoder_input_ids = inputs.pop("decoder_input_ids", None)
-        decoder_input_ids = shift_tokens_right(decoder_input_ids, self.tokenizer.pad_token_id, self.tokenizer.cls_token_id)
 
         labels = inputs.pop("labels", None) # doc_length
 
         batch_size = inputs['input_ids'].size()[0]
         global_attention_mask_cls = (inputs['input_ids']==self.CLS).type(torch.uint8)
         global_attention_mask_sep = (inputs['input_ids']==self.SEP).type(torch.uint8)
-        global_attention_mask = global_attention_mask_cls + global_attention_mask_sep
-        inputs = {**inputs, "global_attention_mask": global_attention_mask, "decoder_input_ids": decoder_input_ids, "output_attentions":True}
+        global_attention_mask_period = (inputs['input_ids']==self.tokenizer.convert_tokens_to_ids('.')).type(torch.uint8)
 
-        outputs = self.model(**inputs) # sequence_output, pooled_output, (hidden_states), (attentions)
-        
+        global_attention_mask = global_attention_mask_cls + global_attention_mask_sep + global_attention_mask_period
+        inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True}
+
+        outputs = self.model(**inputs) # sequence_output, pooled_output, (hidden_states), (attentions)       
 
         encoder_last_hidden_state = outputs.encoder_last_hidden_state # seq length by hidden size
         encoder_last_hidden_state = torch.transpose(encoder_last_hidden_state, 1, 2)
@@ -123,11 +108,12 @@ class NERTransformer(BaseTransformer):
     def training_step(self, batch, batch_num):
         "Compute loss and log."
         #inputs = {"input_ids": batch[0], "attention_mask": batch[1], "decoder_input_ids": batch[2], "decoder_attention_mask": batch[3], "labels": batch[4], "position_ids": batch[5]}
-        docoder_input_ids = shift_tokens_right(batch[2])
-        inputs = {"input_ids": batch[0], "attention_mask": batch[1], "decoder_input_ids": docoder_input_ids, "decoder_attention_mask": batch[3], "labels": batch[4]}
+
+        inputs = {"input_ids": batch[0], "attention_mask": batch[1], "decoder_input_ids": batch[2], "decoder_attention_mask": batch[3], "labels": batch[4]}
         
         outputs = self(**inputs)
         loss = outputs[0]
+
         return {"loss": loss}
 
     def prepare_data(self):
@@ -416,9 +402,6 @@ class NERTransformer(BaseTransformer):
 
 
     def configure_optimizers(self):
-        # Freeze LED weights
-        for idx, (name, parameters) in enumerate(self.model.named_parameters()):
-            parameters.requires_grad=False        
         optimizer = AdamW(self.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
         self.opt=optimizer
         return optimizer
