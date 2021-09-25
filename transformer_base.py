@@ -22,21 +22,41 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-
 logger = logging.getLogger(__name__)
 
-#from transformers.modeling_auto import MODEL_MAPPING
-# ALL_MODELS = tuple(ALL_PRETRAINED_MODEL_ARCHIVE_MAP)
-#MODEL_CLASSES = tuple(m.model_type for m in MODEL_MAPPING)
+from pretrain import NERLongformer
+from clearml import StorageManager
 
-# MODEL_MODES = {
-#     "base": AutoModel,
-#     "sequence-classification": AutoModelForSequenceClassification,
-#     "question-answering": AutoModelForQuestionAnswering,
-#     "pretraining": AutoModelForPreTraining,
-#     "token-classification": AutoModelForTokenClassification,
-#     "language-modeling": AutoModelWithLMHead,
-# }
+class bucket_ops:
+    StorageManager.set_cache_file_limit(5, cache_context=None)
+
+    def list(remote_path:str):
+        return StorageManager.list(remote_path, return_full_path=False)
+
+    def upload_folder(local_path:str, remote_path:str):
+        StorageManager.upload_folder(local_path, remote_path, match_wildcard=None)
+        print("Uploaded {}".format(local_path))
+
+    def download_folder(local_path:str, remote_path:str):
+        StorageManager.download_folder(remote_path, local_path, match_wildcard=None, overwrite=True)
+        print("Downloaded {}".format(remote_path))
+    
+    def get_file(remote_path:str):        
+        object = StorageManager.get_local_copy(remote_path)
+        return object
+
+    def upload_file(local_path:str, remote_path:str):
+        StorageManager.upload_file(local_path, remote_path, wait_for_upload=True, retries=3)
+
+pretrained_lm_path = bucket_ops.get_file(
+    remote_path="s3://experiment-logging/storage/ner-pretraining/NER-LM.641f6206c62045cca0a4f84ba91a3f2b/models/best_entity_lm.ckpt"
+    )  
+
+lm_args={
+    "num_epochs":10,
+    "train_batch_size":6,
+    "eval_batch_size":4
+}
 
 def set_seed(args):
     random.seed(args.seed)
@@ -78,8 +98,9 @@ class BaseTransformer(pl.LightningModule):
         self.config = AutoConfig.from_pretrained(model_name)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.tokenizer.model_max_length = self.hparams.max_seq_length_src
-        #self.model = longformerSeq2Seq(self.hparams)
+        self.longformer = NERLongformer.load_from_checkpoint(pretrained_lm_path, args = lm_args)
         self.model = AutoModel.from_pretrained(model_name, gradient_checkpointing=True, use_cache=False)
+
 
     def is_logger(self):
         return True

@@ -1,22 +1,22 @@
-from clearml import Task
+from clearml import Task, StorageManager, Dataset
 import argparse
 import json
 
 # Task.add_requirements('botocore', package_version='1.20.106')
 # Task.add_requirements('aiobotocore', package_version='1.3.3')
-Task.add_requirements('transformers', package_version='4.2.0')
+# Task.add_requirements('transformers', package_version='4.2.0')
 task = Task.init(project_name='longGRIT', task_name='LEDGRIT', output_uri="s3://experiment-logging/storage/")
+clearlogger = task.get_logger()
 
 #task.set_base_docker("nvcr.io/nvidia/pytorch:21.05-py3")
 #task.set_base_docker("default-base")
-task.set_base_docker("nvidia/cuda:10.2-cudnn7-devel-ubuntu18.04")
 
 config = json.load(open('config.json'))
 args = argparse.Namespace(**config)
-task.connect(args)
 
+task.connect(args)
+task.set_base_docker("nvidia/cuda:10.2-cudnn7-devel-ubuntu18.04")
 task.execute_remotely(queue_name="128RAMv100", exit_process=True)
-clearlogger = task.get_logger()
 
 import glob
 import logging
@@ -30,7 +30,6 @@ import torch
 from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score
 from torch.nn import CrossEntropyLoss, Softmax, Linear
 from torch.utils.data import DataLoader, TensorDataset
-
 from transformers import AdamW
 from transformer_base import BaseTransformer, add_generic_args, generic_train
 from utils_s_t import convert_examples_to_features, get_labels, read_examples_from_file, read_golds_from_test_file, not_sub_string, remove_led_prefix_from_tokens
@@ -40,8 +39,6 @@ role_list = ["PerpInd", "PerpOrg", "Target", "Victim", "Weapon"]
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO)
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 
 
 class NERTransformer(BaseTransformer):
@@ -62,22 +59,21 @@ class NERTransformer(BaseTransformer):
         self.CLS = self.tokenizer.convert_tokens_to_ids(self.tokenizer.cls_token)
         self.linear = Linear(768, self.hparams.max_seq_length_src)
 
-
     def forward(self, **inputs):
 
         #print(', '.join(['{}={!r}'.format(k, v.size()) for k, v in inputs.items()]))
         decoder_input_mask_1d = inputs.pop("decoder_attention_mask", None)
-
         labels = inputs.pop("labels", None) # doc_length
 
         batch_size = inputs['input_ids'].size()[0]
         global_attention_mask_cls = (inputs['input_ids']==self.CLS).type(torch.uint8)
         global_attention_mask_sep = (inputs['input_ids']==self.SEP).type(torch.uint8)
         global_attention_mask_period = (inputs['input_ids']==self.tokenizer.convert_tokens_to_ids('.')).type(torch.uint8)
-
         global_attention_mask = global_attention_mask_cls + global_attention_mask_sep + global_attention_mask_period
-        inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True}
 
+        input_ids = inputs.pop("input_ids", None)
+        input_embeds = self.longformer(input_ids=input_ids)
+        inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True, "inputs_embeds": input_embeds[1][-1]}
         outputs = self.model(**inputs) # sequence_output, pooled_output, (hidden_states), (attentions)       
 
         encoder_last_hidden_state = outputs.encoder_last_hidden_state # seq length by hidden size
@@ -452,15 +448,14 @@ class NERTransformer(BaseTransformer):
         return parser
 
 
-# if __name__ == "__main__":
 #parser = argparse.ArgumentParser()
 #add_generic_args(parser, os.getcwd())
 #parser = NERTransformer.add_model_specific_args(parser, os.getcwd())
 #args = parser.parse_args()
-
 ### To create config.json
 ##args_dict = vars(args)
 ##json.dump(args_dict, open('config.json', 'w'))
+
 
 #Read args from config file instead, use vars() to convert namespace to dict
 # dataset = Dataset.get(dataset_name="wikievents-muc4", dataset_project="datasets/wikievents", dataset_tags=["muc4-format"], only_published=True)
@@ -468,11 +463,34 @@ class NERTransformer(BaseTransformer):
 # # if os.path.exists(dataset_folder)==False:
 # os.symlink(os.path.join(dataset_folder, "data/wikievents/muc_format"), args.data_dir)
 
+class bucket_ops:
+    StorageManager.set_cache_file_limit(5, cache_context=None)
+
+    def list(remote_path:str):
+        return StorageManager.list(remote_path, return_full_path=False)
+
+    def upload_folder(local_path:str, remote_path:str):
+        StorageManager.upload_folder(local_path, remote_path, match_wildcard=None)
+        print("Uploaded {}".format(local_path))
+
+    def download_folder(local_path:str, remote_path:str):
+        StorageManager.download_folder(remote_path, local_path, match_wildcard=None, overwrite=True)
+        print("Downloaded {}".format(remote_path))
+    
+    def get_file(remote_path:str):        
+        object = StorageManager.get_local_copy(remote_path)
+        return object
+
+    def upload_file(local_path:str, remote_path:str):
+        StorageManager.upload_file(local_path, remote_path, wait_for_upload=True, retries=3)
+
+# trained_model_path = bucket_ops.get_file(
+#     remote_path="s3://experiment-logging/storage/ner-pretraining/NER-LM.0b6dc1f3db3f41e1ad9c3db53bbd1b31/models/best_entity_lm.ckpt"
+#     )  
 
 global_args = args
 logger.info(args)
 model = NERTransformer(args)
-#model = NERTransformer.load_from_checkpoint("./outputs/model.pt")
 trainer = generic_train(model, args)
 
 results = trainer.test(model)
