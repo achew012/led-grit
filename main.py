@@ -2,9 +2,6 @@ from clearml import Task, StorageManager, Dataset
 import argparse
 import json
 
-# Task.add_requirements('botocore', package_version='1.20.106')
-# Task.add_requirements('aiobotocore', package_version='1.3.3')
-# Task.add_requirements('transformers', package_version='4.2.0')
 task = Task.init(project_name='longGRIT', task_name='LEDGRIT', output_uri="s3://experiment-logging/storage/")
 clearlogger = task.get_logger()
 
@@ -39,7 +36,6 @@ role_list = ["PerpInd", "PerpOrg", "Target", "Victim", "Weapon"]
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO)
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 class NERTransformer(BaseTransformer):
     """
@@ -483,9 +479,6 @@ class bucket_ops:
     def upload_file(local_path:str, remote_path:str):
         StorageManager.upload_file(local_path, remote_path, wait_for_upload=True, retries=3)
 
-# trained_model_path = bucket_ops.get_file(
-#     remote_path="s3://experiment-logging/storage/ner-pretraining/NER-LM.0b6dc1f3db3f41e1ad9c3db53bbd1b31/models/best_entity_lm.ckpt"
-#     )  
 
 global_args = args
 logger.info(args)
@@ -493,7 +486,6 @@ model = NERTransformer(args)
 trainer = generic_train(model, args)
 
 results = trainer.test(model)
-print(results)
 task.close()
 
 
