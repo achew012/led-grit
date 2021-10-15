@@ -28,7 +28,7 @@ import numpy as np
 from torch import nn
 import torch
 from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score
-from torch.nn import CrossEntropyLoss, Softmax, Linear
+from torch.nn import CrossEntropyLoss, Softmax, Linear, NLLLoss
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import AdamW
 from transformer_base import BaseTransformer, add_generic_args, generic_train
@@ -71,9 +71,10 @@ class NERTransformer(BaseTransformer):
         global_attention_mask_period = (inputs['input_ids']==self.tokenizer.convert_tokens_to_ids('.')).type(torch.uint8)
         global_attention_mask = global_attention_mask_cls + global_attention_mask_sep + global_attention_mask_period
 
-        input_ids = inputs.pop("input_ids", None)
-        input_embeds = self.longformer(input_ids=input_ids)
-        inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True, "inputs_embeds": input_embeds[1][-1]}
+        #input_ids = inputs.pop("input_ids", None)
+        #input_embeds = self.longformer(input_ids=input_ids)
+        #inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True, "inputs_embeds": input_embeds[1][-1]}
+        inputs = {**inputs, "global_attention_mask": global_attention_mask, "output_attentions":True}
         outputs = self.model(**inputs) # sequence_output, pooled_output, (hidden_states), (attentions)       
 
         encoder_last_hidden_state = outputs.encoder_last_hidden_state # seq length by hidden size
@@ -181,10 +182,6 @@ class NERTransformer(BaseTransformer):
         preds = np.concatenate([x["pred"] for x in outputs], axis=0)
         preds = np.argmax(preds, axis=2)
         out_label_ids = np.concatenate([x["target"] for x in outputs], axis=0)
-        # converted = np.concatenate([x["input_ids"] for x in outputs], axis=0)
-        # converted = np.concatenate([[sent[pred] for pred in preds] for sent in converted], axis=0)
-        # converted = [self.tokenizer.convert_ids_to_tokens(sent) for sent in converted]
-        # converted = [[token for token in sent if token!="<pad>"] for sent in converted]
 
         out_label_list = [[] for _ in range(out_label_ids.shape[0])]
         preds_list = [[] for _ in range(out_label_ids.shape[0])]
@@ -398,7 +395,9 @@ class NERTransformer(BaseTransformer):
 
 
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        for idx, (name, parameters) in enumerate(self.longformer.named_parameters()):
+            parameters.requires_grad=False
+        optimizer = AdamW(self.model.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
         self.opt=optimizer
         return optimizer
 
